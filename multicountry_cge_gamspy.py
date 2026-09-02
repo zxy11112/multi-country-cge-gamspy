@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-GAMSPy (MCP / PATH) port of ``multicountry_cge.py``.
+GAMSPy (MCP / PATH) multi-country CGE model.
 
 Same model, same artificial data, same tariff experiment:
   * regions A, B, (ROW); sectors food, manufacturing; factors labor, capital
@@ -850,7 +850,7 @@ def _extract(d, p, w, Y, Pc, C, x, INC, Dv=None) -> dict:
             xA[k, :, k] = DA[k, :]
     IA = INC.records.set_index("s")["level"].reindex(regions).to_numpy()
 
-    # post-solve diagnostics (same formulas as the scipy version)
+    # post-solve diagnostics
     col = np.prod(PA ** d["beta"], axis=1)       # cost of living
     real = IA * (1.0 - d.get("mps", 0.0)) / col  # real consumption income
     gm = np.log(YA / xA.sum(axis=2))             # goods-market log residual
@@ -859,7 +859,7 @@ def _extract(d, p, w, Y, Pc, C, x, INC, Dv=None) -> dict:
 
 
 # ----------------------------------------------------------------------
-# Reporting and comparison with the original scipy outputs
+# Reporting and comparison
 # ----------------------------------------------------------------------
 def compare(case: str, res: dict) -> None:
     d, b, c = res["data"], res["benchmark"], res["counterfactual"]
