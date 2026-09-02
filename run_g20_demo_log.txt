@@ -1,0 +1,40 @@
+shock: USA tariff on CHN ELE: 4.09% -> 29.09%
+
+[1] benchmark replication:
+    weighted dev:  x 2.431e-06  Y 1.917e-06
+    max dev:       x 4.550e-04  prices 2.793e-05
+[2] goods-market clearing under shock: 8.311e-13
+[3] numeraire invariance: max dev = 3.248e-05
+All verification checks passed.
+
+welfare and EV:
+region  welfare_pct    EV_mUSD
+   CHN       -0.073 -10129.883
+   USA        0.041   9109.306
+  EU27        0.151  17904.040
+   JPN        0.122   4051.129
+   KOR        0.140   1987.717
+   IND        0.027    799.744
+   CAN        0.117   1883.172
+   MEX        0.014    189.231
+   BRA        0.121   1691.091
+   ZAF        0.138    411.431
+   RUS        0.258   3697.577
+   SAU        0.374   2444.057
+   AUS        0.214   2466.434
+   ROW        0.192  23484.002
+
+CHN ELE exports by destination, % change:
+  CHN -> USA   -59.15%
+  CHN -> EU27  +2.44%
+  CHN -> JPN   +2.00%
+  CHN -> KOR   +1.96%
+  CHN -> IND   +1.45%
+  CHN -> CAN   +2.50%
+  CHN -> MEX   +2.18%
+  CHN -> BRA   +1.65%
+  CHN -> ZAF   +1.53%
+  CHN -> RUS   +1.83%
+  CHN -> SAU   +2.09%
+  CHN -> AUS   +1.69%
+  CHN -> ROW   +2.04%

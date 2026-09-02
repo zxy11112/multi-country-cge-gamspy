@@ -1,0 +1,61 @@
+{
+  "case_name": "three_region_explicit_ROW",
+  "regions": [
+    "A",
+    "B",
+    "ROW"
+  ],
+  "sectors": [
+    "food",
+    "manufacturing"
+  ],
+  "factors": [
+    "labor",
+    "capital"
+  ],
+  "shock": {
+    "destination": "A",
+    "origin": "B",
+    "sector": "manufacturing",
+    "ad_valorem_rate": 0.1
+  },
+  "closure": {
+    "numeraire": "A:labor=1",
+    "factor_endowments": "fixed by region",
+    "factor_mobility": "within-region across sectors only",
+    "international_factor_mobility": "none",
+    "household_saving": "none; households spend all income",
+    "government": "tariff revenue rebated lump-sum locally",
+    "current_account": "fixed net foreign transfer B; M-X=B",
+    "net_foreign_transfer": {
+      "A": 0.0,
+      "B": 0.0,
+      "ROW": 0.0
+    },
+    "omitted_equation_for_walras_law": "ROW:manufacturing goods market",
+    "omitted_equation_residual_is_checked": true
+  },
+  "row_treatment": {
+    "implemented": true,
+    "type": "explicit endogenous aggregate region",
+    "full_production_system": true,
+    "full_factor_markets": true,
+    "representative_household": true,
+    "producer_prices": "endogenous",
+    "factor_prices": "endogenous",
+    "trade_flows": "bilateral Armington flows with A and B",
+    "within_ROW_trade": "represented as ROW purchases from ROW; no internal country detail",
+    "policy_scope": "the sample tariff applies only to A imports from B; A imports from ROW are initially untaxed",
+    "interpretation_limit": "ROW welfare is an aggregate; distribution across the countries inside ROW is not identified",
+    "not_a_balancing_account": true
+  },
+  "solver": {
+    "algorithm": "scipy.optimize.least_squares on log variables",
+    "benchmark_function_evaluations": 1,
+    "counterfactual_function_evaluations": 4,
+    "benchmark_max_equation_residual": 6.661338147750941e-16,
+    "benchmark_max_goods_market_residual": 6.661338147750941e-16,
+    "counterfactual_max_equation_residual": 6.661338147750937e-16,
+    "counterfactual_max_goods_market_residual": 6.661338147750937e-16
+  }
+}

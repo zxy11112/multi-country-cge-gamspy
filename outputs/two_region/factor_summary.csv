@@ -1,0 +1,5 @@
+region,factor,benchmark_factor_price,counterfactual_factor_price,factor_price_pct_change
+A,labor,1.0,1.0,0.0
+A,capital,1.0,1.0040763268790047,0.40763268790047213
+B,labor,1.0,0.9755815458170115,-2.441845418298849
+B,capital,1.0,0.9657994076398225,-3.4200592360177473

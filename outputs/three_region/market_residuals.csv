@@ -1,0 +1,7 @@
+region,sector,was_omitted_from_solver,log_supply_demand_ratio
+A,food,False,0.0
+A,manufacturing,False,4.440892098500625e-16
+B,food,False,-3.33066907387547e-16
+B,manufacturing,False,6.661338147750937e-16
+ROW,food,False,-4.440892098500627e-16
+ROW,manufacturing,True,6.661338147750937e-16
