@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-GAMSPy (MCP / PATH) multi-country CGE model.
+GAMSPy (MCP / PATH) port of ``multicountry_cge.py``.
 
 Same model, same artificial data, same tariff experiment:
   * regions A, B, (ROW); sectors food, manufacturing; factors labor, capital
@@ -246,13 +246,14 @@ def get_real_data() -> dict:
 def get_real_data_io(ddir_name: str = "data_real_io",
                      regions: list | None = None,
                      sectors: list | None = None,
-                     sigma_default=(3.0, 4.0, 2.0)) -> dict:
-    """Real-data IO model loader (2022, with intermediates).
+                     sigma_default=(3.0, 4.0, 2.0),
+                     year: int = 2022) -> dict:
+    """Real-data IO model loader (benchmark year via file suffix).
 
     Reads <ddir_name>/{production,bilateral_flows,io_coefficients,
-    final_demand,net_transfers,baseline_tariffs,elasticities}.csv
+    final_demand,net_transfers,baseline_tariffs,elasticities}_<year>.csv
     built by the corresponding prepare_* pipeline.
-    Defaults: CHN / USA / ROW x {prim, manu, serv}.
+    Defaults: CHN / USA / ROW x {prim, manu, serv}, year 2022.
     """
     ddir = HERE / ddir_name
     if regions is None:
@@ -261,11 +262,11 @@ def get_real_data_io(ddir_name: str = "data_real_io",
         sectors = ["prim", "manu", "serv"]
     factors = ["labor", "capital"]
 
-    prod = pd.read_csv(ddir / "production_2022.csv")
-    flows = pd.read_csv(ddir / "bilateral_flows_2022.csv")
-    io_df = pd.read_csv(ddir / "io_coefficients_2022.csv")
-    c0_df = pd.read_csv(ddir / "final_demand_2022.csv")
-    transfers = pd.read_csv(ddir / "net_transfers_2022.csv")
+    prod = pd.read_csv(ddir / f"production_{year}.csv")
+    flows = pd.read_csv(ddir / f"bilateral_flows_{year}.csv")
+    io_df = pd.read_csv(ddir / f"io_coefficients_{year}.csv")
+    c0_df = pd.read_csv(ddir / f"final_demand_{year}.csv")
+    transfers = pd.read_csv(ddir / f"net_transfers_{year}.csv")
 
     R, S = len(regions), len(sectors)
     x0_arr = np.zeros((R, S, R))
@@ -309,8 +310,8 @@ def get_real_data_io(ddir_name: str = "data_real_io",
     # baseline (benchmark-year) tariffs: prefer the effective (G1151-
     # anchored) version when present; zero if no tariff file at all
     tau0 = np.zeros((R, S, R))
-    tau_csv_eff = ddir / "baseline_tariffs_effective_2022.csv"
-    tau_csv = ddir / "baseline_tariffs_2022.csv"
+    tau_csv_eff = ddir / f"baseline_tariffs_effective_{year}.csv"
+    tau_csv = ddir / f"baseline_tariffs_{year}.csv"
     tau_file = tau_csv_eff if tau_csv_eff.exists() else tau_csv
     if tau_file.exists():
         for row_ in pd.read_csv(tau_file).itertuples():
@@ -370,12 +371,15 @@ REGIONS_G20 = ["CHN", "USA", "EU27", "JPN", "KOR", "IND", "CAN", "MEX",
                "BRA", "ZAF", "RUS", "SAU", "AUS", "ROW"]
 
 
-def get_real_data_g20() -> dict:
-    """G20-flavor 14-region x 12-sector model, 2022."""
+def get_real_data_g20(ddir_name: str = "data_real_g20",
+                      year: int = 2022) -> dict:
+    """G20-flavor 14-region x 12-sector model (benchmark year set by the
+    data directory and file suffix, e.g. data_real_g20_2005)."""
     return get_real_data_io(
-        "data_real_g20", regions=REGIONS_G20, sectors=SECTORS_6X12,
+        ddir_name, regions=REGIONS_G20, sectors=SECTORS_6X12,
         sigma_default=[3.0, 4.0, 5.0, 4.0, 5.0, 4.0,
-                       4.0, 5.0, 6.0, 5.0, 4.0, 2.0])
+                       4.0, 5.0, 6.0, 5.0, 4.0, 2.0],
+        year=year)
 
 
 def _df3(values: np.ndarray, regions, sectors, c1="r", c2="i", c3="s"):
@@ -418,11 +422,74 @@ def solve_model(case: str = "3r", tariff_rate: float = 0.10,
     d = data if data is not None else get_data(case)
     if shock is None:
         shock = ("B", "manufacturing", "A", tariff_rate)
+
+    h = build_model(d, numeraire=numeraire, transfer_unit=transfer_unit,
+                    solver_tolerance=solver_tolerance)
+    cge = h["cge"]
+    tau = h["tau"]
+    regions, sectors = h["regions"], h["sectors"]
+    V = h["vars"]
+    path_opts = {"convergence_tolerance": solver_tolerance}
+    t_build_done = time.perf_counter()
+
+    # ---------- benchmark solve (tau = 0) ----------
+    t_bench_start = time.perf_counter()
+    cge.solve(solver="PATH", solver_options=path_opts)
+    t_bench_done = time.perf_counter()
+    bench = _extract(d, **V)
+    bench_status = str(cge.status)
+
+    # ---------- counterfactual: configurable tariff shock ----------
+    # Homotopy: step the tariff gradually from its benchmark value to the
+    # target; GAMSPy keeps variable levels, so each solve warm-starts
+    # from the previous equilibrium.
+    shock_list = [shock] if isinstance(shock[0], str) else list(shock)
+    parsed = []
+    for shk in shock_list:
+        parsed.append((regions.index(shk[0]), sectors.index(shk[1]),
+                       regions.index(shk[2]), float(shk[3])))
+    starts = [float(d["tau0"][o, i_, s_]) for o, i_, s_, _ in parsed]
+    step_times = []
+    for step in range(1, homotopy_steps + 1):
+        t_step_start = time.perf_counter()
+        for (o, i_, s_, target), tau_start in zip(parsed, starts):
+            rate = tau_start + (target - tau_start) * step / homotopy_steps
+            tau[regions[o], sectors[i_], regions[s_]] = rate
+        cge.solve(solver="PATH", solver_options=path_opts)
+        t_step_done = time.perf_counter()
+        step_times.append(t_step_done - t_step_start)
+    t_cf_done = time.perf_counter()
+    shock_res = _extract(d, **V)
+
+    t_total = time.perf_counter() - t_start
+    timing = {
+        "total_seconds": t_total,
+        "build_seconds": h["build_seconds"],
+        "benchmark_solve_seconds": t_bench_done - t_bench_start,
+        "counterfactual_solve_seconds": t_cf_done - t_bench_done,
+        "per_step_seconds": step_times,
+        "homotopy_steps": homotopy_steps,
+    }
+
+    return dict(data=d, benchmark=bench, counterfactual=shock_res,
+                bench_status=bench_status, cf_status=str(cge.status),
+                timing=timing)
+
+
+def build_model(d, numeraire=("A", "labor"), transfer_unit=None,
+                solver_tolerance=1e-10) -> dict:
+    """Build the MCP model once and return handles for repeated solves.
+
+    The container is initialized at the benchmark data ``d`` (tau = d["tau0"]).
+    Between solves, mutate the returned ``tau`` parameter (e.g. via
+    ``tau.setRecords(df)``); variable levels persist across ``cge.solve()``
+    calls, so each solve warm-starts from the previous equilibrium.
+    """
     regions, sectors, factors = d["regions"], d["sectors"], d["factors"]
     if transfer_unit is None:
         transfer_unit = (regions[0], factors[0])
+    _t_build_start = time.perf_counter()
 
-    t_build_start = time.perf_counter()
     m = Container(working_directory=str(GAMS_WORK))
     r = Set(m, "r", records=regions)
     i = Set(m, "i", records=sectors)
@@ -769,59 +836,13 @@ def solve_model(case: str = "3r", tariff_rate: float = 0.10,
         problem="MCP",
         matches=match_map,
     )
-
-    # Tight but certifiable tolerance: 1e-12 makes PATH end with
-    # "Locally Infeasible" (it cannot certify to that level on the large
-    # real-data systems) despite excellent solutions; 1e-10 certifies
-    # Optimal and replicates the benchmark at machine precision.
-    path_opts = {"convergence_tolerance": solver_tolerance}
-
-    t_build_done = time.perf_counter()
-
-    # ---------- benchmark solve (tau = 0) ----------
-    t_bench_start = time.perf_counter()
-    cge.solve(solver="PATH", solver_options=path_opts)
-    t_bench_done = time.perf_counter()
-    bench = _extract(d, p, w, Y, Pc, C, x, INC,
-                     Dv=Dv if nested else None)
-    bench_status = str(cge.status)
-
-    # ---------- counterfactual: configurable tariff shock ----------
-    # Homotopy: step the tariff gradually from its benchmark value to the
-    # target; GAMSPy keeps variable levels, so each solve warm-starts
-    # from the previous equilibrium.
-    shock_list = [shock] if isinstance(shock[0], str) else list(shock)
-    parsed = []
-    for shk in shock_list:
-        parsed.append((regions.index(shk[0]), sectors.index(shk[1]),
-                       regions.index(shk[2]), float(shk[3])))
-    starts = [float(d["tau0"][o, i_, s_]) for o, i_, s_, _ in parsed]
-    step_times = []
-    for step in range(1, homotopy_steps + 1):
-        t_step_start = time.perf_counter()
-        for (o, i_, s_, target), tau_start in zip(parsed, starts):
-            rate = tau_start + (target - tau_start) * step / homotopy_steps
-            tau[regions[o], sectors[i_], regions[s_]] = rate
-        cge.solve(solver="PATH", solver_options=path_opts)
-        t_step_done = time.perf_counter()
-        step_times.append(t_step_done - t_step_start)
-    t_cf_done = time.perf_counter()
-    shock_res = _extract(d, p, w, Y, Pc, C, x, INC,
-                         Dv=Dv if nested else None)
-
-    t_total = time.perf_counter() - t_start
-    timing = {
-        "total_seconds": t_total,
-        "build_seconds": t_build_done - t_build_start,
-        "benchmark_solve_seconds": t_bench_done - t_bench_start,
-        "counterfactual_solve_seconds": t_cf_done - t_bench_done,
-        "per_step_seconds": step_times,
-        "homotopy_steps": homotopy_steps,
-    }
-
-    return dict(data=d, benchmark=bench, counterfactual=shock_res,
-                bench_status=bench_status, cf_status=str(cge.status),
-                timing=timing)
+    return dict(
+        m=m, cge=cge, tau=tau, regions=regions, sectors=sectors,
+        factors=factors, nested=nested,
+        build_seconds=time.perf_counter() - _t_build_start,
+        vars=dict(p=p, w=w, Y=Y, Pc=Pc, C=C, x=x, INC=INC,
+                  Dv=Dv if nested else None),
+    )
 
 
 def _extract(d, p, w, Y, Pc, C, x, INC, Dv=None) -> dict:
@@ -850,16 +871,23 @@ def _extract(d, p, w, Y, Pc, C, x, INC, Dv=None) -> dict:
             xA[k, :, k] = DA[k, :]
     IA = INC.records.set_index("s")["level"].reindex(regions).to_numpy()
 
-    # post-solve diagnostics
+    # post-solve diagnostics (same formulas as the scipy version)
     col = np.prod(PA ** d["beta"], axis=1)       # cost of living
     real = IA * (1.0 - d.get("mps", 0.0)) / col  # real consumption income
     gm = np.log(YA / xA.sum(axis=2))             # goods-market log residual
+
+    # GDP per region: nominal = factor income at current factor prices;
+    # real = value added at benchmark factor prices (pv = 1).
+    gdp_nom = (wA * d["endow"]).sum(axis=1)
+    gdp_real = (d["ava"] * YA).sum(axis=1)
+
     return dict(p=pA, w=wA, Y=YA, P=PA, C=CA, x=xA, I=IA,
-                cost_of_living=col, real_income=real, goods_log_resid=gm)
+                cost_of_living=col, real_income=real, goods_log_resid=gm,
+                gdp_nominal=gdp_nom, gdp_real=gdp_real)
 
 
 # ----------------------------------------------------------------------
-# Reporting and comparison
+# Reporting and comparison with the original scipy outputs
 # ----------------------------------------------------------------------
 def compare(case: str, res: dict) -> None:
     d, b, c = res["data"], res["benchmark"], res["counterfactual"]

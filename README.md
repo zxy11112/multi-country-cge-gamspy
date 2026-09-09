@@ -199,10 +199,79 @@ elasticities.
 
 ---
 
-## 6. Repository layout
+## 6. Monte Carlo counterfactuals, 2005-2019
+
+`mc_run.py` runs a Monte Carlo tariff-perturbation experiment on the SCRP
+cluster, once per benchmark year 2005-2019:
+
+1. Generate and store 100,000 counterfactual tariff matrices
+   `tau_n = max(0, tau0 + eps_n)`, with `eps_n ~ U[-0.05, +0.10]` drawn
+   independently per (destination, sector) tariff and applied to all origins
+   alike (MFN preserved); domestic and services tariffs stay at baseline.
+2. Solve the first 10,000 scenarios with the CGE model (16 parallel worker
+   processes per year, warm-started); the remaining 90,000 scenarios are
+   stored with null outputs.
+
+Per scenario the solver stores 14-region `welfare_pct`, `ev_musd`,
+real/nominal GDP ratios, and the full bilateral trade-flow ratio tensor
+`x_ratio` (origin x sector x destination). All 15 years x 10,000 scenarios
+solved with zero failures (max goods-market residual 3.4e-10).
+
+```
+mc_run.py               Monte Carlo driver (generation + parallel solve)
+mc_year_exports.sh      Slurm script, one year per job
+mc_retry_exports.sh     Slurm script, sequential fallback (license limits)
+prepare_all_years.py    build the 2005-2019 benchmark datasets
+download_wits_yearly.py WITS tariff download per year
+mc_results/             MANIFEST.md + manifest_summary.csv + per-year
+                        summary.json (parameters, benchmark snapshot, stats)
+```
+
+The full per-year tensors (`results.npz` ~920 MB, `taus.npy` ~900 MB per
+year, 27 GB total) live on the cluster, not in this repository; the
+`summary.json` files in `mc_results/` contain the benchmark snapshots and
+distributional statistics needed to reproduce the headline numbers.
+
+---
+
+## 7. Neural surrogate for welfare response
+
+`train_welfare_nn.py` fits a fully connected network to the 150,000 solved
+Monte Carlo scenarios, mapping
+
+```
+(168 MFN tariffs [14 destinations x 12 sectors] + 15 year one-hots)
+    -> 14-region welfare change (%)
+```
+
+Architecture: `183 -> 512 -> 512 -> 256 -> 128 -> 14`, ReLU, Adam
+(lr 1e-3, batch 512), early stopping at epoch 303. Test-set performance
+(15,000 held-out scenarios): mean R2 = 0.9996, overall RMSE = 0.0076
+percentage points, verified with an independent split.
+
+Inference replaces one PATH solve (~410 ms) with one forward pass:
+~170 us single-scenario (CPU), ~0.17 us per scenario in a 100k batch on a
+single RTX 3060. The surrogate is an interpolation tool: it is valid only
+inside the training domain (tariff perturbations within [-5%, +10%] of the
+2005-2019 benchmarks). Out-of-domain scenarios should be solved with the
+CGE model directly.
+
+```
+train_welfare_nn.py     training (dataset cache, standardization, metrics)
+bench_forward.py        inference-speed benchmark (CPU/GPU)
+infer_demo.py           prediction vs ground-truth demo
+nn_job.sh / nn_job_gpu.sh / bench_gpu_job.sh   Slurm scripts
+welfare_nn/             trained weights (.pt, .npz) + metrics.json
+```
+
+---
+
+## 8. Repository layout
 
 ```
 multicountry_cge_gamspy.py   model: calibration, MCP construction, PATH solve
+                             (2026-09 update: multi-year benchmarks, GDP
+                             outputs, MC/NN support functions)
 run_g20_demo.py              verification + US/CHN ELE tariff experiment
 run_g20_demo_log.txt         pre-generated run log
 data_real_g20/               calibrated 2022 benchmark (CSV inputs)
@@ -210,6 +279,8 @@ prepare_*_g20.py             benchmark data pipeline (Section 4)
 download_*.py / clean_*.py   raw data acquisition and tidying
 compute_row_tariff_factor.py effective-tariff calibration (IMF GFS)
 outputs/server_run_*/        pre-generated results bundle
+mc_run.py / mc_results/      Monte Carlo experiment, 2005-2019 (Section 6)
+train_welfare_nn.py / welfare_nn/   neural surrogate (Section 7)
 scrp_job.sh                  example Slurm batch script
 DEPLOY.md                    cluster deployment notes
 environment.yml              conda environment
@@ -217,7 +288,7 @@ environment.yml              conda environment
 
 ---
 
-## 7. Limitations
+## 9. Limitations
 
 - Static model: no capital accumulation, dynamics, or supply-side investment
   response.
@@ -226,8 +297,9 @@ environment.yml              conda environment
 - ROW is a single synthetic region; incidence inside ROW is not identified.
 - Tariffs are the only policy instrument (no NTMs, subsidies, or exchange
   rates).
-- The model is calibrated to a single benchmark year (2022); it does not
-  track growth between benchmark and policy date.
+- Benchmark calibrations cover 2005-2019 (Section 6); the headline demo is
+  the 2022 calibration. The model does not track growth between benchmark
+  and policy date.
 
 Natural extensions: additional benchmark years, endogenous labor supply,
 government saving-investment closure, and disaggregating ROW into
